@@ -75,6 +75,15 @@ export function parseWorkflowDsl(text: string, now: string): WorkflowImportResul
   if (normalized.nodes.length === 0) return { ok: false, error: 'empty' }
   return {
     ok: true,
-    workflow: { ...normalized, enabled: false, callableByAgent: false, runs: [] }
+    workflow: {
+      ...normalized,
+      enabled: false,
+      callableByAgent: false,
+      lastRunAt: '',
+      nextRunAt: '',
+      lastStatus: 'idle',
+      lastMessage: '',
+      runs: []
+    }
   }
 }

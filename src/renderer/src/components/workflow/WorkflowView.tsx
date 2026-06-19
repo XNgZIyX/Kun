@@ -169,7 +169,19 @@ export function WorkflowView({ leftSidebarCollapsed, onToggleLeftSidebar }: Prop
         while (existing.has(`${name} (${suffix})`)) suffix += 1
         name = `${name} (${suffix})`
       }
-      const imported: WorkflowV1 = { ...result.workflow, id: `workflow-${crypto.randomUUID()}`, name }
+      const oldId = result.workflow.id
+      const newId = `workflow-${crypto.randomUUID()}`
+      // Re-point any self-referencing loop / subworkflow node from the old id to the new one.
+      const nodes = result.workflow.nodes.map((node): WorkflowNodeV1 => {
+        if (node.type === 'subworkflow' && node.config.workflowId === oldId) {
+          return { ...node, config: { ...node.config, workflowId: newId } }
+        }
+        if (node.type === 'loop' && node.config.workflowId === oldId) {
+          return { ...node, config: { ...node.config, workflowId: newId } }
+        }
+        return node
+      })
+      const imported: WorkflowV1 = { ...result.workflow, id: newId, name, nodes }
       setError(null)
       await persist([...workflows, imported])
       setEditingId(imported.id)

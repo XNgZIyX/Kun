@@ -679,6 +679,36 @@ describe('WorkflowRuntime end-to-end execution', () => {
     runtime.stop()
   }, 20_000)
 
+  it('redacts secret env values from the run-level error message and node error', async () => {
+    const workflow = buildWorkflow({
+      id: 'wf-secret',
+      name: 'Secret',
+      enabled: true,
+      env: [{ key: 'TOKEN', value: 'sk-leak-123', type: 'secret' }],
+      nodes: [
+        { id: 'm', type: 'manual-trigger', config: {} },
+        { id: 'c', type: 'code', config: { code: "throw new Error('boom sk-leak-123 boom')" } }
+      ],
+      connections: [{ id: 'e1', source: 'm', sourceHandle: 'out', target: 'c', targetHandle: 'in' }]
+    })
+    const store = createStore(settingsWithWorkflows([workflow]))
+    const runtime = createWorkflowRuntime({ store: store as never, runtimeRequest: vi.fn() as never, logError: vi.fn() })
+    const runId = requireOk(await runtime.runWorkflow('wf-secret'))
+    await waitFor(async () => {
+      const run = store.read().workflow.workflows[0].runs.find((entry) => entry.id === runId)
+      return Boolean(run && run.status !== 'running')
+    }, 10_000)
+    const wf = store.read().workflow.workflows[0]
+    const run = wf.runs.find((entry) => entry.id === runId)!
+    expect(run.status).toBe('error')
+    // The secret must not leak into the run message, the node error, or the workflow's lastMessage.
+    expect(run.message).not.toContain('sk-leak-123')
+    expect(run.message).toContain('***')
+    expect(run.nodeResults.find((result) => result.nodeId === 'c')?.error).not.toContain('sk-leak-123')
+    expect(wf.lastMessage).not.toContain('sk-leak-123')
+    runtime.stop()
+  }, 15_000)
+
   it('sort orders the upstream array by a numeric field', async () => {
     const store = createStore(
       settingsWithWorkflows([

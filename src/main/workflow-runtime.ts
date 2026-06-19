@@ -712,6 +712,25 @@ async function mapWithConcurrency<T, R>(
   return results
 }
 
+/** Replace every secret value with *** in a string. */
+function redactSecrets(secretValues: string[], text: string): string {
+  return secretValues.reduce((acc, secret) => acc.split(secret).join('***'), text)
+}
+
+/**
+ * All secret-typed env values across every workflow. Used so a parent run redacts
+ * secrets that belong to a sub-workflow / loop body it invoked, not just its own.
+ */
+function collectSecretValues(settings: AppSettingsV1): string[] {
+  const values: string[] = []
+  for (const workflow of settings.workflow.workflows) {
+    for (const entry of workflow.env) {
+      if (entry.type === 'secret' && entry.value.trim()) values.push(entry.value)
+    }
+  }
+  return values
+}
+
 /** Coerce a workflow's env vars into a {{$env.key}} lookup (secrets are plain values here). */
 function resolveEnv(env: WorkflowEnvVarV1[]): Record<string, unknown> {
   const out: Record<string, unknown> = {}
@@ -1419,11 +1438,10 @@ export class WorkflowRuntime {
     const nodeOutputs: Record<string, WorkflowPayload> = {}
     const env = resolveEnv(workflow.env)
     const runVars = ctx.runVars ?? {}
-    const secretValues = workflow.env
-      .filter((entry) => entry.type === 'secret' && entry.value.trim())
-      .map((entry) => entry.value)
-    const redact = (text: string): string =>
-      secretValues.reduce((acc, secret) => acc.split(secret).join('***'), text)
+    // Global secret set so this run also masks secrets owned by sub-workflows / loop
+    // bodies whose output or error flows back across the workflow boundary.
+    const secretValues = collectSecretValues(settings)
+    const redact = (text: string): string => redactSecrets(secretValues, text)
     const scopeFor = (): InterpScope => ({ nodes: nodeOutputs, env, run: runVars, loop: ctx.loop })
 
     const incoming = (nodeId: string): WorkflowConnectionV1[] => inEdges.get(nodeId) ?? []
@@ -1571,7 +1589,7 @@ export class WorkflowRuntime {
             })
             setLive(node.id, 'error')
             status = 'error'
-            errorMessage = lastError
+            errorMessage = redact(lastError)
             break
           }
         }
@@ -1590,7 +1608,7 @@ export class WorkflowRuntime {
       }
     } catch (error) {
       status = 'error'
-      errorMessage = error instanceof Error ? error.message : String(error)
+      errorMessage = redact(error instanceof Error ? error.message : String(error))
       this.deps.logError('workflow', 'Workflow graph failed', { message: errorMessage, workflowId: workflow.id })
     }
 
@@ -1729,7 +1747,11 @@ export class WorkflowRuntime {
           const raw = source ? resolveExpr(payload, source, scope) : payload.json
           const items = (Array.isArray(raw) ? raw : []).slice(0, node.config.maxIterations)
           const total = items.length
+          // Fail-fast: once one iteration throws (and we're not collecting errors),
+          // short-circuit pending iterations so parallel workers stop launching new sub-runs.
+          let aborted = false
           const runItem = async (item: unknown, index: number): Promise<unknown> => {
+            if (aborted) throw new Error('Loop aborted after an earlier item failed.')
             const itemPayload: WorkflowPayload = {
               json: item,
               text: typeof item === 'string' ? item : safeJson(item)
@@ -1744,6 +1766,7 @@ export class WorkflowRuntime {
               return result.output.json
             } catch (error) {
               if (node.config.continueOnError) return { error: error instanceof Error ? error.message : String(error) }
+              aborted = true
               throw error
             }
           }
@@ -1996,14 +2019,16 @@ export class WorkflowRuntime {
           return { payload, message: 'approved (test)', branch: 'approved' }
         }
         const token = randomUUID()
+        // Redact secrets: the instruction is surfaced via status() to the approval UI.
+        const approvalSecrets = collectSecretValues(settings)
         const entry: WorkflowPendingApprovalV1 = {
           token,
           workflowId: runRef.workflowId,
           runId: runRef.runId,
           nodeId: node.id,
           nodeName: node.name,
-          title: node.config.title.trim() || node.name.trim() || 'Approval required',
-          instruction: interpolate(node.config.instruction, payload, scope),
+          title: redactSecrets(approvalSecrets, node.config.title.trim() || node.name.trim() || 'Approval required'),
+          instruction: redactSecrets(approvalSecrets, interpolate(node.config.instruction, payload, scope)),
           createdAt: new Date().toISOString()
         }
         const decision = await new Promise<WorkflowApprovalDecision>((resolve) => {

@@ -172,6 +172,26 @@ function CustomNodeForm({
   )
 }
 
+/** Comma-separated options input that keeps raw text while typing and normalizes on blur. */
+function OptionsInput({ options, onCommit }: { options: string[]; onCommit: (next: string[]) => void }): ReactElement {
+  const { t } = useTranslation('common')
+  const joined = options.join(', ')
+  const [raw, setRaw] = useState(joined)
+  // Re-sync only when the underlying options change by value (e.g. switching nodes / after commit).
+  useEffect(() => {
+    setRaw(joined)
+  }, [joined])
+  return (
+    <input
+      className={INPUT_CLASS}
+      value={raw}
+      placeholder={t('workflowModuleFieldOptions')}
+      onChange={(event) => setRaw(event.target.value)}
+      onBlur={() => onCommit(raw.split(',').map((option) => option.trim()).filter((option) => option.length > 0))}
+    />
+  )
+}
+
 /** Reusable typed-field editor — shared by the manual trigger's input schema and the Parameter Extractor. */
 function InputFieldsEditor({
   fields,
@@ -249,19 +269,7 @@ function InputFieldsEditor({
                 />
               </div>
               {field.type === 'select' ? (
-                <input
-                  className={INPUT_CLASS}
-                  value={field.options.join(', ')}
-                  placeholder={t('workflowModuleFieldOptions')}
-                  onChange={(event) =>
-                    update({
-                      options: event.target.value
-                        .split(',')
-                        .map((option) => option.trim())
-                        .filter((option) => option.length > 0)
-                    })
-                  }
-                />
+                <OptionsInput options={field.options} onCommit={(next) => update({ options: next })} />
               ) : null}
               <label className="flex items-center gap-2 text-[12px] text-ds-muted">
                 <input
@@ -364,11 +372,16 @@ export function NodeConfigPanel({
   const [testOpen, setTestOpen] = useState(false)
   // Tracks the most recently focused text field so the variable picker can splice a token at its caret.
   const lastFocused = useRef<HTMLInputElement | HTMLTextAreaElement | null>(null)
+  // Drop the focus target when the selected node changes (the panel instance is reused).
+  useEffect(() => {
+    lastFocused.current = null
+  }, [node?.id])
 
   const insertToken = (token: string): void => {
     const el = lastFocused.current
     setPickerOpen(false)
-    if (!el) return
+    // Bail if no field was focused or it was unmounted (e.g. after switching nodes).
+    if (!el || !el.isConnected) return
     const start = el.selectionStart ?? el.value.length
     const end = el.selectionEnd ?? el.value.length
     const next = `${el.value.slice(0, start)}${token}${el.value.slice(end)}`
