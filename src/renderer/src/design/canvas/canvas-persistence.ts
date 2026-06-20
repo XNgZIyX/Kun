@@ -1,0 +1,120 @@
+import type { CanvasDocument, CanvasShape } from './canvas-types'
+import { ROOT_SHAPE_ID } from './canvas-types'
+
+const DESIGN_DIR = '.kun-design'
+
+export function canvasDocPath(artifactId: string): string {
+  return `${DESIGN_DIR}/${artifactId}/canvas.json`
+}
+
+export function serializeCanvasDocument(doc: CanvasDocument): string {
+  return `${JSON.stringify(doc, null, 2)}\n`
+}
+
+const isObj = (v: unknown): v is Record<string, unknown> =>
+  v !== null && typeof v === 'object' && !Array.isArray(v)
+
+function parseShape(raw: unknown, id: string): CanvasShape | null {
+  if (!isObj(raw)) return null
+  const type = raw.type
+  if (
+    type !== 'rect' &&
+    type !== 'ellipse' &&
+    type !== 'text' &&
+    type !== 'image' &&
+    type !== 'frame' &&
+    type !== 'group'
+  )
+    return null
+
+  return {
+    id,
+    type: type as CanvasShape['type'],
+    name: typeof raw.name === 'string' ? raw.name : id,
+    parentId: typeof raw.parentId === 'string' ? raw.parentId : null,
+    frameId: typeof raw.frameId === 'string' ? raw.frameId : null,
+    x: typeof raw.x === 'number' ? raw.x : 0,
+    y: typeof raw.y === 'number' ? raw.y : 0,
+    width: typeof raw.width === 'number' ? raw.width : 100,
+    height: typeof raw.height === 'number' ? raw.height : 100,
+    rotation: typeof raw.rotation === 'number' ? raw.rotation : 0,
+    opacity: typeof raw.opacity === 'number' ? raw.opacity : 1,
+    visible: typeof raw.visible === 'boolean' ? raw.visible : true,
+    locked: typeof raw.locked === 'boolean' ? raw.locked : false,
+    fills: Array.isArray(raw.fills) ? raw.fills : [],
+    strokes: Array.isArray(raw.strokes) ? raw.strokes : [],
+    cornerRadius:
+      typeof raw.cornerRadius === 'number'
+        ? raw.cornerRadius
+        : Array.isArray(raw.cornerRadius) && raw.cornerRadius.length === 4
+          ? (raw.cornerRadius as [number, number, number, number])
+          : 0,
+    children: Array.isArray(raw.children) ? raw.children.filter((c): c is string => typeof c === 'string') : [],
+    ...(typeof raw.textContent === 'string' && { textContent: raw.textContent }),
+    ...(typeof raw.fontSize === 'number' && { fontSize: raw.fontSize }),
+    ...(typeof raw.fontFamily === 'string' && { fontFamily: raw.fontFamily }),
+    ...(typeof raw.fontWeight === 'number' && { fontWeight: raw.fontWeight }),
+    ...(typeof raw.textAlign === 'string' && { textAlign: raw.textAlign as CanvasShape['textAlign'] }),
+    ...(typeof raw.lineHeight === 'number' && { lineHeight: raw.lineHeight }),
+    ...(typeof raw.fontColor === 'string' && { fontColor: raw.fontColor }),
+    ...(typeof raw.imageUrl === 'string' && { imageUrl: raw.imageUrl }),
+    ...(typeof raw.clipContent === 'boolean' && { clipContent: raw.clipContent })
+  }
+}
+
+export function parseCanvasDocument(raw: string): CanvasDocument | null {
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (!isObj(parsed)) return null
+  if (parsed.version !== 1) return null
+  const rootId = typeof parsed.rootId === 'string' ? parsed.rootId : ROOT_SHAPE_ID
+  if (!isObj(parsed.objects)) return null
+
+  const objects: Record<string, CanvasShape> = {}
+  for (const [id, rawShape] of Object.entries(parsed.objects as Record<string, unknown>)) {
+    const shape = parseShape(rawShape, id)
+    if (shape) objects[id] = shape
+  }
+
+  if (!objects[rootId]) return null
+  return { version: 1, rootId, objects }
+}
+
+let _saveTimer: ReturnType<typeof setTimeout> | null = null
+
+export function persistCanvasDocument(workspaceRoot: string, artifactId: string, doc: CanvasDocument): void {
+  if (!workspaceRoot || typeof window.kunGui?.writeWorkspaceFile !== 'function') return
+
+  if (_saveTimer) clearTimeout(_saveTimer)
+  _saveTimer = setTimeout(() => {
+    _saveTimer = null
+    void window.kunGui
+      .writeWorkspaceFile({
+        path: canvasDocPath(artifactId),
+        workspaceRoot,
+        content: serializeCanvasDocument(doc)
+      })
+      .catch(() => undefined)
+  }, 600)
+}
+
+export async function loadCanvasDocument(
+  workspaceRoot: string,
+  artifactId: string
+): Promise<CanvasDocument | null> {
+  if (!workspaceRoot || typeof window.kunGui?.readWorkspaceFile !== 'function') return null
+  try {
+    const result = await window.kunGui.readWorkspaceFile({
+      path: canvasDocPath(artifactId),
+      workspaceRoot
+    })
+    if (!result || !result.ok) return null
+    return parseCanvasDocument(result.content)
+  } catch {
+    return null
+  }
+}

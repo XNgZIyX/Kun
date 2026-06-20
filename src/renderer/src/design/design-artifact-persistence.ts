@@ -50,7 +50,7 @@ export function parseArtifactMeta(raw: string, dirId: string): DesignArtifact | 
     : []
   return {
     id,
-    kind: o.kind === 'graph' ? 'graph' : 'html',
+    kind: o.kind === 'graph' ? 'graph' : o.kind === 'canvas' ? 'canvas' : 'html',
     title: isStr(o.title) ? o.title : dirId,
     relativePath,
     createdAt,
@@ -66,27 +66,32 @@ export function parseArtifactMeta(raw: string, dirId: string): DesignArtifact | 
 export function reconstructArtifact(dirId: string, entries: WorkspaceEntry[]): DesignArtifact | null {
   const files = entries.filter((e) => e.type === 'file')
   const hasGraph = files.some((f) => f.name === 'graph.json')
+  const hasCanvas = files.some((f) => f.name === 'canvas.json')
   const htmlVersions = files
     .map((f) => /^v(\d+)\.html$/.exec(f.name))
     .filter((m): m is RegExpExecArray => m !== null)
     .map((m) => Number(m[1]))
     .sort((a, b) => b - a)
-  if (!hasGraph && htmlVersions.length === 0) return null
+  if (!hasGraph && !hasCanvas && htmlVersions.length === 0) return null
   const now = new Date().toISOString()
-  const relativePath = hasGraph
-    ? `${DESIGN_DIR}/${dirId}/graph.json`
-    : `${DESIGN_DIR}/${dirId}/v${htmlVersions[0]}.html`
-  const versions = hasGraph
-    ? [{ id: dirId, relativePath, createdAt: now, summary: '' }]
-    : htmlVersions.map((n) => ({
-        id: `${dirId}-v${n}`,
-        relativePath: `${DESIGN_DIR}/${dirId}/v${n}.html`,
-        createdAt: now,
-        summary: ''
-      }))
+  const kind = hasCanvas ? 'canvas' : hasGraph ? 'graph' : 'html'
+  const relativePath = hasCanvas
+    ? `${DESIGN_DIR}/${dirId}/canvas.json`
+    : hasGraph
+      ? `${DESIGN_DIR}/${dirId}/graph.json`
+      : `${DESIGN_DIR}/${dirId}/v${htmlVersions[0]}.html`
+  const versions =
+    kind === 'html'
+      ? htmlVersions.map((n) => ({
+          id: `${dirId}-v${n}`,
+          relativePath: `${DESIGN_DIR}/${dirId}/v${n}.html`,
+          createdAt: now,
+          summary: ''
+        }))
+      : [{ id: dirId, relativePath, createdAt: now, summary: '' }]
   return {
     id: dirId,
-    kind: hasGraph ? 'graph' : 'html',
+    kind,
     title: dirId,
     relativePath,
     createdAt: now,

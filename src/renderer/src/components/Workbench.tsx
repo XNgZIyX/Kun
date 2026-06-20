@@ -58,13 +58,17 @@ import { WriteAssistantPanel } from './write/WriteAssistantPanel'
 import { WriteSidebar } from './write/WriteSidebar'
 import { DesignWorkspaceView } from './design/DesignWorkspaceView'
 import { DesignImplementPanel } from './design/DesignImplementPanel'
+import { DesignAIRail } from './design/DesignAIRail'
 import { DesignSidebar } from './design/DesignSidebar'
 import { useDesignWorkspaceStore } from '../design/design-workspace-store'
 import { buildDesignFromCodePrompt, buildDesignTurnPrompt } from '../design/design-turn-prompt'
 import { buildImplementDesignPrompt } from '../design/design-implement-prompt'
 import { createDesignArtifactId, type DesignArtifact } from '../design/design-types'
 import { formatDesignSystemMarkdown, hashDesignSystem } from '../design/design-context'
-import { emptyDesignGraph, serializeDesignGraph } from '../design/design-graph'
+import { serializeDesignGraph, starterDesignGraph } from '../design/design-graph'
+import { canImplementDesignArtifact } from '../design/design-artifact-actions'
+import { createEmptyDocument } from '../design/canvas/canvas-types'
+import { serializeCanvasDocument } from '../design/canvas/canvas-persistence'
 import { SddAssistantPanel } from './sdd/SddAssistantPanel'
 import { SddDraftEditorView } from './sdd/SddDraftEditorView'
 import { SidebarTitlebarToggleButton } from './sidebar/SidebarPrimitives'
@@ -2157,7 +2161,7 @@ export function Workbench(): ReactElement {
         await window.kunGui.writeWorkspaceFile({
           path: relativePath,
           workspaceRoot: designWorkspaceRoot,
-          content: serializeDesignGraph(emptyDesignGraph())
+          content: serializeDesignGraph(starterDesignGraph())
         })
       } catch {
         // non-fatal: the editor creates it on first save
@@ -2168,6 +2172,39 @@ export function Workbench(): ReactElement {
         id: artifactId,
         kind: 'graph',
         title: t('designGraphTitle'),
+        relativePath,
+        createdAt,
+        updatedAt: createdAt,
+        versions: [{ id: `${artifactId}-v1`, relativePath, createdAt, summary: '' }]
+      })
+    })()
+  }
+
+  const createDesignCanvas = (): void => {
+    const designWorkspaceRoot = useDesignWorkspaceStore.getState().workspaceRoot || workspaceRoot
+    if (!designWorkspaceRoot) {
+      setError(t('workspaceRequiredToCreateThread'))
+      return
+    }
+    const artifactId = createDesignArtifactId()
+    const createdAt = new Date().toISOString()
+    const relativePath = `.kun-design/${artifactId}/canvas.json`
+    void (async () => {
+      try {
+        await window.kunGui.writeWorkspaceFile({
+          path: relativePath,
+          workspaceRoot: designWorkspaceRoot,
+          content: serializeCanvasDocument(createEmptyDocument())
+        })
+      } catch {
+        // non-fatal
+      }
+      const store = useDesignWorkspaceStore.getState()
+      store.setWorkspaceRoot(designWorkspaceRoot)
+      store.upsertArtifact({
+        id: artifactId,
+        kind: 'canvas',
+        title: t('designCanvasTitle'),
         relativePath,
         createdAt,
         updatedAt: createdAt,
@@ -2194,17 +2231,20 @@ export function Workbench(): ReactElement {
       const store = useDesignWorkspaceStore.getState()
       store.setWorkspaceRoot(designWorkspaceRoot)
       const createdAt = new Date().toISOString()
-      // A selected artifact means "iterate it" (new version reading the prior);
-      // no selection (e.g. after "New design") means a fresh artifact.
+      // Only HTML artifacts can be iterated by the free-form design composer.
+      // Graph artifacts run from their own node canvas; when one is selected, a
+      // composer turn starts a fresh HTML draft instead of treating graph.json
+      // as a prior HTML version.
       const active = store.artifacts.find((item) => item.id === store.activeArtifactId) ?? null
+      const activeHtml = canImplementDesignArtifact(active) ? active : null
       let relativePath: string
       let basePath: string | undefined
-      if (active) {
-        const versionN = active.versions.length + 1
-        relativePath = `.kun-design/${active.id}/v${versionN}.html`
-        basePath = active.relativePath
-        store.addArtifactVersion(active.id, {
-          id: `${active.id}-v${versionN}`,
+      if (activeHtml) {
+        const versionN = activeHtml.versions.length + 1
+        relativePath = `.kun-design/${activeHtml.id}/v${versionN}.html`
+        basePath = activeHtml.relativePath
+        store.addArtifactVersion(activeHtml.id, {
+          id: `${activeHtml.id}-v${versionN}`,
           relativePath,
           createdAt,
           summary: text
@@ -2250,6 +2290,10 @@ export function Workbench(): ReactElement {
   // the shared design system to the workspace, then dispatches an implement turn
   // into a fresh code thread and records provenance for drift tracking.
   const implementDesignInCode = (artifact: DesignArtifact): void => {
+    if (!canImplementDesignArtifact(artifact)) {
+      setError(t('designImplementHtmlOnly'))
+      return
+    }
     const designState = useDesignWorkspaceStore.getState()
     const designWorkspaceRoot = designState.workspaceRoot || workspaceRoot
     if (!designWorkspaceRoot) {
@@ -2667,6 +2711,7 @@ export function Workbench(): ReactElement {
                 onDesignOpen={openDesignMode}
                 onImplement={implementDesignInCode}
                 onNewGraph={createDesignGraph}
+                onNewCanvas={createDesignCanvas}
               />
             ) : route === 'write' ? (
               <WriteSidebar
@@ -2765,7 +2810,7 @@ export function Workbench(): ReactElement {
               onOpenAgentSettings={() => openSettings('design')}
             />
             {designImplementOpen ? (
-              <div className="min-h-0 w-[360px] shrink-0">
+              <div className="min-h-0 w-[380px] shrink-0">
                 <DesignImplementPanel
                   title={designImplementTitle}
                   workspaceRoot={workspaceRoot}
@@ -2804,7 +2849,9 @@ export function Workbench(): ReactElement {
                   className="h-full w-full"
                 />
               </div>
-            ) : null}
+            ) : (
+              <DesignAIRail />
+            )}
           </div>
         ) : route === 'write' ? (
           <>

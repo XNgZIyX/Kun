@@ -8,8 +8,8 @@
  * they never rewrite the `'html'` path.
  */
 
-/** Artifact kind. `'graph'` = node canvas; penpot is a future addition. */
-export type DesignArtifactKind = 'html' | 'graph'
+/** Artifact kind. `'graph'` = node canvas; `'canvas'` = Figma-style SVG design canvas. */
+export type DesignArtifactKind = 'html' | 'graph' | 'canvas'
 
 /** Canvas surface. `'live'` shows the real running app (code mode's dev server). P2 adds `'graph'`, P3 adds `'penpot'`. */
 export type DesignCanvasView = 'preview' | 'code' | 'live'

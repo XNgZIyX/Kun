@@ -9,6 +9,7 @@ import {
   Globe,
   Monitor,
   Moon,
+  Palette,
   RotateCw,
   Smartphone,
   Sun,
@@ -21,7 +22,10 @@ import { useDesignWorkspaceStore } from '../../design/design-workspace-store'
 import { DESIGN_VIEWPORT_WIDTHS, type DesignViewport } from '../../design/design-types'
 import { startWriteWorkspaceFileWatch } from '../../write/write-file-watch'
 import { highlightCodeHtml, renderFallbackCodeHtml } from '../../lib/code-highlighting'
+import { DesignAgentPanel } from './DesignAgentPanel'
+import { DesignContextPopover } from './DesignContextPopover'
 import { DesignGraphView } from './DesignGraphView'
+import { CanvasViewport } from './canvas/CanvasViewport'
 
 type WebviewEl = HTMLElement & { reload?: () => void }
 
@@ -38,13 +42,20 @@ function isCompleteHtml(content: string): boolean {
   return content.trim().toLowerCase().endsWith('</html>')
 }
 
+type CanvasProps = {
+  input: string
+  setInput: (value: string) => void
+  onSubmitPrompt?: (prompt: string) => void
+  onOpenAgentSettings?: () => void
+}
+
 /**
  * Live design canvas. The active artifact file is watched (write-file-watch),
  * so the agent's incremental writes refresh the canvas in place — the webview
  * is reloaded (not remounted) once a complete document exists. Preview/code/live
  * are the discriminated-union seam for P2/P3 surfaces.
  */
-export function DesignCanvas(): ReactElement {
+export function DesignCanvas({ input, setInput, onSubmitPrompt, onOpenAgentSettings }: CanvasProps): ReactElement {
   const { t } = useTranslation('common')
   const busy = useChatStore((s) => s.busy)
   const workspaceRoot = useDesignWorkspaceStore((s) => s.workspaceRoot)
@@ -60,15 +71,18 @@ export function DesignCanvas(): ReactElement {
   const setViewport = useDesignWorkspaceStore((s) => s.setViewport)
   const setCanvasBackground = useDesignWorkspaceStore((s) => s.setCanvasBackground)
   const setFileError = useDesignWorkspaceStore((s) => s.setFileError)
+  const implementOpen = useDesignWorkspaceStore((s) => s.implementOpen)
 
   const activeArtifact = artifacts.find((item) => item.id === activeArtifactId) ?? null
   const relativePath = activeArtifact?.relativePath ?? ''
   const isGraphArtifact = activeArtifact?.kind === 'graph'
+  const isCanvasArtifact = activeArtifact?.kind === 'canvas'
 
   const [fileUrl, setFileUrl] = useState('')
   const [highlightHtml, setHighlightHtml] = useState(() => renderFallbackCodeHtml(''))
   const [error, setError] = useState('')
   const [ready, setReady] = useState(false)
+  const [contextPopoverOpen, setContextPopoverOpen] = useState(false)
   const webviewRef = useRef<WebviewEl | null>(null)
   const authorizedPathRef = useRef('')
   const sourceRef = useRef('')
@@ -182,10 +196,18 @@ export function DesignCanvas(): ReactElement {
       })
       .catch(() => setFileError(t('designExportFailed')))
   }
+  const openDesignComposer = (): void => {
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLTextAreaElement>('[data-design-composer-textarea]')
+        ?.focus()
+    })
+  }
 
   const framed = viewport !== 'desktop' && deviceFrame
   const viewportWidth = DESIGN_VIEWPORT_WIDTHS[viewport]
   const isWebViewSurface = canvasView === 'preview' || canvasView === 'live'
+  const hasHtmlArtifact = activeArtifact?.kind === 'html'
 
   const toolbarButton = (active: boolean): string =>
     `inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
@@ -215,18 +237,32 @@ export function DesignCanvas(): ReactElement {
     </div>
   )
 
+  if (isCanvasArtifact && activeArtifact) {
+    return (
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ds-main">
+        <CanvasViewport />
+      </div>
+    )
+  }
+
   if (isGraphArtifact && activeArtifact) {
     return (
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ds-main">
-        <DesignGraphView artifact={activeArtifact} workspaceRoot={workspaceRoot} />
+        <DesignGraphView
+          artifact={activeArtifact}
+          workspaceRoot={workspaceRoot}
+          composerValue={input}
+          onComposerChange={setInput}
+          onOpenAgentSettings={onOpenAgentSettings}
+        />
       </div>
     )
   }
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-ds-main">
+    <div className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-ds-main">
       <div className="ds-no-drag flex shrink-0 items-center gap-2 px-3 py-2 shadow-[inset_0_-1px_0_var(--ds-sidebar-row-ring)]">
-        {canvasView !== 'code' ? (
+        {hasHtmlArtifact && canvasView !== 'code' ? (
           <div className="flex items-center gap-0.5 rounded-lg bg-black/[0.04] p-0.5 dark:bg-white/[0.05]">
             {VIEWPORTS.map(({ id, icon: Icon, labelKey }) => (
               <button
@@ -242,39 +278,41 @@ export function DesignCanvas(): ReactElement {
             ))}
           </div>
         ) : null}
-        <div className="ml-auto flex items-center gap-0.5 rounded-lg bg-black/[0.04] p-0.5 dark:bg-white/[0.05]">
-          <button
-            type="button"
-            aria-label={t('designViewPreview')}
-            title={t('designViewPreview')}
-            onClick={() => setCanvasView('preview')}
-            className={toolbarButton(canvasView === 'preview')}
-          >
-            <Eye className="h-4 w-4" strokeWidth={1.9} />
-          </button>
-          <button
-            type="button"
-            aria-label={t('designViewCode')}
-            title={t('designViewCode')}
-            onClick={() => setCanvasView('code')}
-            className={toolbarButton(canvasView === 'code')}
-          >
-            <Code2 className="h-4 w-4" strokeWidth={1.9} />
-          </button>
-          {devPreviewUrl ? (
-            <button
-              type="button"
-              aria-label={t('designViewLive')}
-              title={t('designViewLive')}
-              onClick={() => setCanvasView('live')}
-              className={toolbarButton(canvasView === 'live')}
-            >
-              <Globe className="h-4 w-4" strokeWidth={1.9} />
-            </button>
+        <div className="ml-auto flex items-center gap-0.5">
+          {hasHtmlArtifact ? (
+            <div className="flex items-center gap-0.5 rounded-lg bg-black/[0.04] p-0.5 dark:bg-white/[0.05]">
+              <button
+                type="button"
+                aria-label={t('designViewPreview')}
+                title={t('designViewPreview')}
+                onClick={() => setCanvasView('preview')}
+                className={toolbarButton(canvasView === 'preview')}
+              >
+                <Eye className="h-4 w-4" strokeWidth={1.9} />
+              </button>
+              <button
+                type="button"
+                aria-label={t('designViewCode')}
+                title={t('designViewCode')}
+                onClick={() => setCanvasView('code')}
+                className={toolbarButton(canvasView === 'code')}
+              >
+                <Code2 className="h-4 w-4" strokeWidth={1.9} />
+              </button>
+              {devPreviewUrl ? (
+                <button
+                  type="button"
+                  aria-label={t('designViewLive')}
+                  title={t('designViewLive')}
+                  onClick={() => setCanvasView('live')}
+                  className={toolbarButton(canvasView === 'live')}
+                >
+                  <Globe className="h-4 w-4" strokeWidth={1.9} />
+                </button>
+              ) : null}
+            </div>
           ) : null}
-        </div>
-        <div className="flex items-center gap-0.5">
-          {isWebViewSurface ? (
+          {hasHtmlArtifact && isWebViewSurface ? (
             <button
               type="button"
               aria-label={t('designToggleBackground')}
@@ -289,12 +327,12 @@ export function DesignCanvas(): ReactElement {
               )}
             </button>
           ) : null}
-          {canvasView === 'code' ? (
+          {hasHtmlArtifact && canvasView === 'code' ? (
             <button type="button" aria-label={t('designCopyCode')} title={t('designCopyCode')} onClick={copyCode} className={actionButton}>
               <Code2 className="h-4 w-4" strokeWidth={1.9} />
             </button>
           ) : null}
-          {relativePath && canvasView !== 'live' ? (
+          {hasHtmlArtifact && relativePath && canvasView !== 'live' ? (
             <>
               <button type="button" aria-label={t('designExportHtml')} title={t('designExportHtml')} onClick={() => exportPrototype('html')} className={actionButton}>
                 <Download className="h-4 w-4" strokeWidth={1.9} />
@@ -304,21 +342,60 @@ export function DesignCanvas(): ReactElement {
               </button>
             </>
           ) : null}
-          {isWebViewSurface ? (
+          {hasHtmlArtifact && isWebViewSurface ? (
             <button type="button" aria-label={t('designOpenExternal')} title={t('designOpenExternal')} onClick={openExternal} className={actionButton}>
               <ExternalLink className="h-4 w-4" strokeWidth={1.9} />
             </button>
           ) : null}
-          {canvasView !== 'live' ? (
+          {hasHtmlArtifact && canvasView !== 'live' ? (
             <button type="button" aria-label={t('designCanvasReload')} title={t('designCanvasReload')} onClick={reload} className={actionButton}>
               <RotateCw className="h-4 w-4" strokeWidth={1.9} />
             </button>
           ) : null}
+          <div className="relative">
+            <button
+              type="button"
+              aria-label={t('designContextLabel')}
+              title={t('designContextLabel')}
+              onClick={() => setContextPopoverOpen((open) => !open)}
+              className={actionButton}
+            >
+              <Palette className="h-4 w-4" strokeWidth={1.9} />
+            </button>
+            {contextPopoverOpen ? (
+              <div className="absolute right-0 top-full z-40 mt-2">
+                <DesignContextPopover
+                  open={contextPopoverOpen}
+                  onClose={() => setContextPopoverOpen(false)}
+                  onOpenSettings={onOpenAgentSettings}
+                  titleKey="designContextLabel"
+                />
+              </div>
+            ) : null}
+          </div>
         </div>
       </div>
 
       <div className="relative min-h-0 flex-1 overflow-hidden">
-        {canvasView === 'live' ? (
+        {!activeArtifact ? (
+          <div className="flex h-full items-center justify-center px-6 text-center">
+            <div className="max-w-[380px]">
+              <div className="text-[15px] font-medium text-[#1f2733] dark:text-white/90">
+                {t('designCanvasEmptyTitle')}
+              </div>
+              <div className="mt-2 text-[13px] leading-6 text-[#646e7c] dark:text-white/55">
+                {t('designCanvasPlaceholder')}
+              </div>
+              <button
+                type="button"
+                onClick={openDesignComposer}
+                className="mt-4 inline-flex items-center justify-center rounded-lg bg-[#3b82d8] px-3 py-2 text-[13px] font-medium text-white shadow-sm transition-colors hover:bg-[#3577c4]"
+              >
+                {t('designCanvasEmptyAction')}
+              </button>
+            </div>
+          </div>
+        ) : canvasView === 'live' ? (
           devPreviewUrl ? (
             deviceWrap(
               <webview
@@ -334,10 +411,6 @@ export function DesignCanvas(): ReactElement {
               {t('designLiveNoServer')}
             </div>
           )
-        ) : !activeArtifact ? (
-          <div className="flex h-full items-center justify-center px-6 text-center text-[13px] text-[#646e7c] dark:text-white/55">
-            {t('designCanvasPlaceholder')}
-          </div>
         ) : error ? (
           <div className="flex h-full items-center justify-center px-6 text-center text-[13px] text-[#c0392b] dark:text-[#ff8f8f]">
             {error}
@@ -365,6 +438,17 @@ export function DesignCanvas(): ReactElement {
           </div>
         )}
       </div>
+      {implementOpen ? null : (
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 z-30 flex justify-center px-4">
+          <DesignAgentPanel
+            mode="html"
+            value={input}
+            onChange={setInput}
+            onSubmit={(value) => onSubmitPrompt?.(value)}
+            activeTitle={activeArtifact?.title}
+          />
+        </div>
+      )}
     </div>
   )
 }

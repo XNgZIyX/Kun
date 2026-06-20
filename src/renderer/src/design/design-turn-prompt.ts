@@ -1,8 +1,7 @@
 import { WRITE_PROTOTYPE_DEFAULT_PROMPT, WRITE_PROTOTYPE_MAX_TEXT_CHARS } from '@shared/write-prototype'
 import { DESIGN_CRAFT_LINES, formatDesignContextLines, type DesignContext } from './design-context'
 
-/** Generation target. P2 adds `'graph'` (node canvas), P3 adds `'penpot'`. */
-export type DesignTurnTarget = 'html'
+export type DesignTurnTarget = 'html' | 'canvas'
 
 export type DesignTurnOptions = {
   target: DesignTurnTarget

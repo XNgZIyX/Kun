@@ -1,9 +1,18 @@
 import { useRef, useState, type ReactElement } from 'react'
-import { Code2, FileCode2, FilePlus2, Network, Trash2 } from 'lucide-react'
+import { Check, Code2, FileCode2, FilePlus2, Layers, Network, RotateCcw, Trash2, TriangleAlert } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { WorkspaceModeTabs } from '../chat/WorkspaceModeTabs'
 import { useDesignWorkspaceStore } from '../../design/design-workspace-store'
 import type { DesignArtifact } from '../../design/design-types'
+import { canImplementDesignArtifact, groupDesignArtifacts } from '../../design/design-artifact-actions'
+import {
+  SidebarCommandRow,
+  SidebarFrame,
+  SidebarIconButton,
+  SidebarSectionHeader,
+  SidebarTreeRow
+} from '../sidebar/SidebarPrimitives'
+import { CanvasLayersPanel } from './canvas/CanvasLayersPanel'
 
 type Props = {
   onCodeOpen: () => void
@@ -13,6 +22,8 @@ type Props = {
   onImplement: (artifact: DesignArtifact) => void
   /** Create a new node-canvas (graph) artifact. */
   onNewGraph: () => void
+  /** Create a new SVG design canvas artifact. */
+  onNewCanvas: () => void
 }
 
 /** Design-mode left sidebar: mode tabs + artifact list with implement/provenance. */
@@ -21,7 +32,8 @@ export function DesignSidebar({
   onWriteOpen,
   onDesignOpen,
   onImplement,
-  onNewGraph
+  onNewGraph,
+  onNewCanvas
 }: Props): ReactElement {
   const { t } = useTranslation('common')
   const artifacts = useDesignWorkspaceStore((s) => s.artifacts)
@@ -30,9 +42,12 @@ export function DesignSidebar({
   const removeArtifact = useDesignWorkspaceStore((s) => s.removeArtifact)
   const renameArtifact = useDesignWorkspaceStore((s) => s.renameArtifact)
   const designSystemHash = useDesignWorkspaceStore((s) => s.designSystemHash)
+  const closeImplementPanel = useDesignWorkspaceStore((s) => s.closeImplementPanel)
+  const activeArtifact = artifacts.find((a) => a.id === activeArtifactId) ?? null
   const [editingId, setEditingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const committingRef = useRef(false)
+  const grouped = groupDesignArtifacts(artifacts)
 
   const beginRename = (artifactId: string, title: string): void => {
     committingRef.current = false
@@ -45,132 +60,182 @@ export function DesignSidebar({
     renameArtifact(artifactId, draft)
     setEditingId(null)
   }
+  const startNewDesign = (): void => {
+    closeImplementPanel()
+    setActiveArtifact(null)
+    requestAnimationFrame(() => {
+      document
+        .querySelector<HTMLTextAreaElement>('[data-design-composer-textarea]')
+        ?.focus()
+    })
+  }
+
+  const renderArtifactStatus = (artifact: DesignArtifact): ReactElement | null => {
+    const implemented = Boolean(artifact.implementedAt)
+    if (!implemented) return null
+    const drift = (artifact.implementedAt ?? '') < artifact.updatedAt
+    const codeDrift =
+      !drift &&
+      Boolean(artifact.implementedDesignSystemHash) &&
+      Boolean(designSystemHash) &&
+      artifact.implementedDesignSystemHash !== designSystemHash
+    const title = drift ? t('designDrift') : codeDrift ? t('designCodeDrift') : t('designImplemented')
+    const Icon = drift ? RotateCcw : codeDrift ? TriangleAlert : Check
+    return (
+      <span
+        title={title}
+        aria-label={title}
+        className={`inline-flex h-5 w-5 shrink-0 items-center justify-center ${
+          drift ? 'text-[#c98a3a]' : codeDrift ? 'text-[#c0392b]' : 'text-[#2e9e6b]'
+        }`}
+      >
+        <Icon className="h-3.5 w-3.5" strokeWidth={2} aria-hidden="true" />
+      </span>
+    )
+  }
+
+  const renderArtifactRows = (items: DesignArtifact[]): ReactElement => (
+    <ul className="space-y-1">
+      {items.map((artifact) => {
+        const active = artifact.id === activeArtifactId
+        const status = renderArtifactStatus(artifact)
+        return (
+          <li key={artifact.id}>
+            {editingId === artifact.id ? (
+              <div className="flex min-h-[34px] items-center rounded-[8px] bg-[var(--ds-sidebar-row-active)] px-2.5 py-1 shadow-[inset_0_0_0_1px_var(--ds-sidebar-row-ring)]">
+                <input
+                  autoFocus
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onBlur={() => commitRename(artifact.id)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') commitRename(artifact.id)
+                    else if (e.key === 'Escape') setEditingId(null)
+                  }}
+                  className="h-7 min-w-0 flex-1 rounded-md border border-[var(--ds-sidebar-row-ring)] bg-[var(--ds-sidebar-field-focus)] px-2 text-[13px] text-[#1f2733] outline-none focus:border-[#3b82d8] dark:text-white"
+                />
+              </div>
+            ) : (
+              <SidebarTreeRow
+                active={active}
+                onClick={() => setActiveArtifact(artifact.id)}
+                onDoubleClick={() => beginRename(artifact.id, artifact.title)}
+                title={artifact.title}
+                className="min-h-[34px]"
+                buttonClassName="items-center gap-2 px-2.5 py-2"
+                trailing={
+                  <>
+                    {artifact.versions.length > 1 ? (
+                      <span className="text-[11.5px] text-ds-faint">
+                        v{artifact.versions.length}
+                      </span>
+                    ) : null}
+                    {status}
+                  </>
+                }
+                actions={
+                  <>
+                    {canImplementDesignArtifact(artifact) ? (
+                      <SidebarIconButton
+                        onClick={() => onImplement(artifact)}
+                        title={t('designImplement')}
+                        ariaLabel={t('designImplement')}
+                        tone="accent"
+                        stopPropagation
+                      >
+                        <Code2 className="h-3.5 w-3.5" strokeWidth={1.9} />
+                      </SidebarIconButton>
+                    ) : null}
+                    <SidebarIconButton
+                      onClick={() => removeArtifact(artifact.id)}
+                      title={t('designDeleteArtifact')}
+                      ariaLabel={t('designDeleteArtifact')}
+                      tone="danger"
+                      stopPropagation
+                    >
+                      <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
+                    </SidebarIconButton>
+                  </>
+                }
+              >
+                {artifact.kind === 'graph' ? (
+                  <Network className="h-3.5 w-3.5 shrink-0 text-ds-muted" strokeWidth={1.9} />
+                ) : artifact.kind === 'canvas' ? (
+                  <Layers className="h-3.5 w-3.5 shrink-0 text-ds-muted" strokeWidth={1.9} />
+                ) : (
+                  <FileCode2 className="h-3.5 w-3.5 shrink-0 text-ds-muted" strokeWidth={1.9} />
+                )}
+                <span className="min-w-0 flex-1 truncate">{artifact.title}</span>
+              </SidebarTreeRow>
+            )}
+          </li>
+        )
+      })}
+    </ul>
+  )
+
+  const renderSection = (title: string, items: DesignArtifact[], empty: string): ReactElement => (
+    <section>
+      <SidebarSectionHeader label={title} />
+      {items.length > 0 ? renderArtifactRows(items) : (
+        <div className="px-2.5 pb-2 text-[12px] leading-5 text-ds-faint">
+          {empty}
+        </div>
+      )}
+    </section>
+  )
 
   return (
-    <div className="ds-no-drag flex h-full min-h-0 flex-col bg-ds-sidebar px-1">
-      <div className="ds-drag ds-sidebar-titlebar-spacer shrink-0 pb-1 pt-2">
-        <div className="ds-sidebar-titlebar-row flex min-h-[34px] items-start">
-          <div aria-hidden className="ds-titlebar-safe-block min-w-[86px]" />
+    <SidebarFrame title={t('appName')}>
+      <div className="ds-no-drag flex flex-col px-1">
+        <WorkspaceModeTabs
+          activeView="design"
+          onCodeOpen={onCodeOpen}
+          onWriteOpen={onWriteOpen}
+          onDesignOpen={onDesignOpen}
+        />
+        <SidebarCommandRow
+          icon={<FilePlus2 className="h-4 w-4" strokeWidth={1.9} />}
+          label={t('designNewArtifact')}
+          onClick={startNewDesign}
+          variant="accent"
+        />
+        <SidebarCommandRow
+          icon={<Layers className="h-4 w-4" strokeWidth={1.9} />}
+          label={t('designNewCanvas')}
+          onClick={onNewCanvas}
+        />
+        <SidebarCommandRow
+          icon={<Network className="h-4 w-4" strokeWidth={1.9} />}
+          label={t('designNewGraph')}
+          onClick={onNewGraph}
+        />
+      </div>
+
+      <div className="ds-no-drag mx-1.5 my-3" />
+
+      <div className="ds-no-drag flex min-h-0 flex-1 flex-col">
+        <div className="min-h-0 flex-1 overflow-y-auto px-1 pb-2">
+          {artifacts.length === 0 ? (
+            <div className="mx-2 mt-2 rounded-lg px-2 py-2">
+              <p className="text-[15px] font-medium text-ds-muted">{t('designNewArtifact')}</p>
+              <p className="mt-1 text-[13px] leading-5 text-ds-faint">{t('designSidebarEmpty')}</p>
+            </div>
+          ) : (
+            <>
+              {renderSection(t('designDraftsSection'), grouped.html, t('designDraftsEmpty'))}
+              {renderSection(t('designCanvasDesignSection'), grouped.canvas, t('designCanvasDesignEmpty'))}
+              {renderSection(t('designCanvasSection'), grouped.graph, t('designCanvasArtifactsEmpty'))}
+            </>
+          )}
+          {activeArtifact?.kind === 'canvas' ? (
+            <section>
+              <SidebarSectionHeader label={t('canvasLayersTitle')} />
+              <CanvasLayersPanel />
+            </section>
+          ) : null}
         </div>
       </div>
-      <WorkspaceModeTabs
-        activeView="design"
-        onCodeOpen={onCodeOpen}
-        onWriteOpen={onWriteOpen}
-        onDesignOpen={onDesignOpen}
-      />
-      <div className="mb-1 flex items-center gap-1">
-        <button
-          type="button"
-          onClick={() => setActiveArtifact(null)}
-          className="flex flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-[13px] font-medium text-[#3b82d8] transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.05]"
-        >
-          <FilePlus2 className="h-4 w-4" strokeWidth={1.9} />
-          {t('designNewArtifact')}
-        </button>
-        <button
-          type="button"
-          onClick={onNewGraph}
-          title={t('designNewGraph')}
-          aria-label={t('designNewGraph')}
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-[#3b82d8] transition-colors hover:bg-black/[0.04] dark:hover:bg-white/[0.05]"
-        >
-          <Network className="h-4 w-4" strokeWidth={1.9} />
-        </button>
-      </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
-        {artifacts.length === 0 ? (
-          <div className="px-2 py-2 text-[13px] leading-relaxed text-[#646e7c] dark:text-white/55">
-            {t('designSidebarEmpty')}
-          </div>
-        ) : (
-          <ul className="space-y-0.5">
-            {artifacts.map((artifact) => {
-              const active = artifact.id === activeArtifactId
-              const implemented = Boolean(artifact.implementedAt)
-              const drift = implemented && (artifact.implementedAt ?? '') < artifact.updatedAt
-              const codeDrift =
-                implemented &&
-                !drift &&
-                Boolean(artifact.implementedDesignSystemHash) &&
-                Boolean(designSystemHash) &&
-                artifact.implementedDesignSystemHash !== designSystemHash
-              return (
-                <li
-                  key={artifact.id}
-                  className={`group/row flex items-center gap-1 rounded-md pr-1 ${
-                    active
-                      ? 'bg-black/[0.06] dark:bg-white/[0.08]'
-                      : 'hover:bg-black/[0.03] dark:hover:bg-white/[0.04]'
-                  }`}
-                >
-                  {editingId === artifact.id ? (
-                    <input
-                      autoFocus
-                      value={draft}
-                      onChange={(e) => setDraft(e.target.value)}
-                      onBlur={() => commitRename(artifact.id)}
-                      onKeyDown={(e) => {
-                        if (e.key === 'Enter') commitRename(artifact.id)
-                        else if (e.key === 'Escape') setEditingId(null)
-                      }}
-                      className="min-w-0 flex-1 rounded border border-[#3b82d8] bg-white px-2 py-1 text-[13px] text-[#1f2733] outline-none dark:bg-[#1f242c] dark:text-white"
-                    />
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={() => setActiveArtifact(artifact.id)}
-                      onDoubleClick={() => beginRename(artifact.id, artifact.title)}
-                      title={artifact.title}
-                      className={`flex min-w-0 flex-1 items-center gap-1.5 px-2 py-1.5 text-left text-[13px] ${
-                        active ? 'font-medium text-[#1f2733] dark:text-white' : 'text-[#646e7c] dark:text-white/55'
-                      }`}
-                    >
-                      {artifact.kind === 'graph' ? (
-                        <Network className="h-3.5 w-3.5 shrink-0 opacity-60" strokeWidth={1.9} />
-                      ) : (
-                        <FileCode2 className="h-3.5 w-3.5 shrink-0 opacity-60" strokeWidth={1.9} />
-                      )}
-                      <span className="min-w-0 flex-1 truncate">{artifact.title}</span>
-                      {artifact.versions.length > 1 ? (
-                        <span className="shrink-0 text-[10px] text-[#8b95a3] dark:text-white/40">v{artifact.versions.length}</span>
-                      ) : null}
-                      {implemented ? (
-                        <span
-                          title={drift ? t('designDrift') : codeDrift ? t('designCodeDrift') : t('designImplemented')}
-                          className={`shrink-0 text-[12px] leading-none ${
-                            drift ? 'text-[#c98a3a]' : codeDrift ? 'text-[#c0392b]' : 'text-[#2e9e6b]'
-                          }`}
-                        >
-                          {drift ? '⟳' : codeDrift ? '⚠' : '✓'}
-                        </span>
-                      ) : null}
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => onImplement(artifact)}
-                    title={t('designImplement')}
-                    aria-label={t('designImplement')}
-                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#8b95a3] opacity-0 transition-opacity hover:text-[#3b82d8] focus-visible:opacity-100 group-hover/row:opacity-100 dark:text-white/45 dark:hover:text-[#6fb0e8]"
-                  >
-                    <Code2 className="h-3.5 w-3.5" strokeWidth={1.9} />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => removeArtifact(artifact.id)}
-                    title={t('designDeleteArtifact')}
-                    aria-label={t('designDeleteArtifact')}
-                    className="inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#8b95a3] opacity-0 transition-opacity hover:text-[#c0392b] focus-visible:opacity-100 group-hover/row:opacity-100 dark:text-white/45"
-                  >
-                    <Trash2 className="h-3.5 w-3.5" strokeWidth={1.9} />
-                  </button>
-                </li>
-              )
-            })}
-          </ul>
-        )}
-      </div>
-    </div>
+    </SidebarFrame>
   )
 }
