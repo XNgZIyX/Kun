@@ -26,6 +26,17 @@ export function isDesignCanvasToolName(name: unknown): boolean {
 const DEFAULT_ERROR_KEY = '__default__'
 const _lastCanvasOpErrors = new Map<string, OpError[]>()
 
+export function canvasOpErrorKey(
+  workspaceRoot: string | undefined | null,
+  docId: string | undefined | null,
+  artifactId: string | undefined | null
+): string | undefined {
+  const root = workspaceRoot?.trim()
+  const doc = docId?.trim()
+  const artifact = artifactId?.trim()
+  return root && doc && artifact ? `${root}:${doc}:${artifact}` : undefined
+}
+
 export function setLastCanvasOpErrors(errors: OpError[], key: string = DEFAULT_ERROR_KEY): void {
   if (errors.length === 0) _lastCanvasOpErrors.delete(key)
   else _lastCanvasOpErrors.set(key, errors)

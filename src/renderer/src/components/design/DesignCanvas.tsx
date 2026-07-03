@@ -6,9 +6,12 @@ import type { DesignRuntimeQualityPayload } from '../../design/design-html-quali
 import { setScreenCreationFactory } from '../../design/canvas/screen-artifact-bridge'
 import { ensureDesignBoardArtifact, findDesignBoardArtifact } from '../../design/design-board'
 import { createLinkedHtmlScreen } from '../../design/canvas/screen-lifecycle'
+import { designThreadBelongsToDocument } from '../../design/design-thread-workbench'
+import { useChatStore } from '../../store/chat-store'
 import { CanvasViewport } from './canvas/CanvasViewport'
 import { PropertiesPanel } from './canvas/PropertiesPanel'
 import { useApplyShapeOpsLive } from '../../design/canvas/use-apply-shape-ops-live'
+import { canvasOpErrorKey } from '../../design/canvas/apply-shape-ops'
 
 type CanvasProps = {
   leftSidebarCollapsed: boolean
@@ -38,8 +41,18 @@ export function DesignCanvas({
   const settingsLoaded = useDesignWorkspaceStore((s) => s.settingsLoaded)
   const artifacts = useDesignWorkspaceStore((s) => s.artifacts)
   const activeDocumentId = useDesignWorkspaceStore((s) => s.activeDocumentId)
+  const activeThreadId = useChatStore((s) => s.activeThreadId)
+  const threads = useChatStore((s) => s.threads)
   const boardArtifact = findDesignBoardArtifact(artifacts)
   const baseDir = activeDocumentId ? `.kun-design/${activeDocumentId}` : undefined
+  const activeThreadBelongsToDoc = designThreadBelongsToDocument({
+    threads,
+    workspaceRoot,
+    docId: activeDocumentId,
+    activeThreadId
+  })
+  const liveOpsThreadId = activeThreadBelongsToDoc ? activeThreadId : null
+  const liveOpsErrorKey = canvasOpErrorKey(workspaceRoot, activeDocumentId, boardArtifact?.id)
 
   useEffect(() => {
     if (!workspaceRoot || !settingsLoaded) return
@@ -49,10 +62,16 @@ export function DesignCanvas({
   // Register the factory that design_canvas/add-screen calls to create the
   // linked HTML artifact and canvas frame in one lifecycle step.
   useEffect(() => {
-    if (!boardArtifact) return
+    if (!boardArtifact || !activeDocumentId) return
+    const documentId = activeDocumentId
+    const boardArtifactId = boardArtifact.id
     setScreenCreationFactory((request) => {
+      const designState = useDesignWorkspaceStore.getState()
+      if (designState.activeDocumentId !== documentId) return null
+      const activeBoard = findDesignBoardArtifact(designState.artifacts)
+      if (activeBoard?.id !== boardArtifactId) return null
       const created = createLinkedHtmlScreen({
-        boardArtifactId: boardArtifact.id,
+        boardArtifactId,
         name: request.name,
         brief: request.brief,
         x: request.x,
@@ -67,9 +86,15 @@ export function DesignCanvas({
       return created ? { artifactId: created.artifactId, shapeId: created.shape.id } : null
     })
     return () => setScreenCreationFactory(null)
-  }, [boardArtifact])
+  }, [activeDocumentId, boardArtifact])
 
-  useApplyShapeOpsLive(Boolean(boardArtifact), onScreenCreated)
+  useApplyShapeOpsLive(
+    Boolean(boardArtifact && liveOpsThreadId),
+    onScreenCreated,
+    undefined,
+    liveOpsErrorKey,
+    liveOpsThreadId
+  )
 
   if (!boardArtifact) {
     return (

@@ -1,6 +1,6 @@
 import type { AttachmentReference } from '../agent/types'
 import type { SendMessageOverrides } from '../store/chat-store-types'
-import { takeLastCanvasOpErrors } from './canvas/apply-shape-ops'
+import { canvasOpErrorKey, takeLastCanvasOpErrors } from './canvas/apply-shape-ops'
 import { useCanvasSelectionStore } from './canvas/canvas-selection-store'
 import { useCanvasShapeStore } from './canvas/canvas-shape-store'
 import { useCanvasViewportStore } from './canvas/canvas-viewport-store'
@@ -136,6 +136,7 @@ export async function submitDesignTurn(
   }
 
   const promptState = getDesignState()
+  const canvasErrorKey = canvasOpErrorKey(options.workspaceRoot, promptState.activeDocumentId, boardArtifact.id)
   const promptPayload = await buildPayload({
     target: resolvedTarget.target,
     mode: (options.attachmentIds?.length ?? 0) > 0 ? 'image' : 'text',
@@ -155,7 +156,7 @@ export async function submitDesignTurn(
     ...(resolvedTarget.canvasSnapshot ? { canvasSnapshot: resolvedTarget.canvasSnapshot } : {}),
     ...(resolvedTarget.htmlFrameContext ? { frameContext: resolvedTarget.htmlFrameContext } : {}),
     ...(resolvedTarget.selectedFrame ? { selectedFrame: resolvedTarget.selectedFrame } : {}),
-    ...(resolvedTarget.target === 'canvas' ? { previousOpErrors: takeCanvasErrors() } : {})
+    ...(resolvedTarget.target === 'canvas' ? { previousOpErrors: takeCanvasErrors(canvasErrorKey) } : {})
   })
   const sent = await options.sendMessage(
     promptPayload.prompt,

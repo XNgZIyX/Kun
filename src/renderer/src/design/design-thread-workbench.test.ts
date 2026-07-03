@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { NormalizedThread } from '../agent/types'
 import {
+  designThreadBelongsToDocument,
   designThreadSelectionSyncForDocument,
   designThreadToSelectForDocument,
   designThreadsForDocument,
@@ -44,6 +45,34 @@ describe('design thread workbench helpers', () => {
       docId: 'doc',
       registry
     }).map((item) => item.id)).toEqual(['thr_2', 'thr_1'])
+  })
+
+  it('checks whether the active thread belongs to the selected design document', () => {
+    const registry = markDesignThread(
+      '/workspace',
+      'doc',
+      'thr_1',
+      markDesignThread('/workspace', 'other-doc', 'thr_2', emptyDesignThreadRegistry())
+    )
+    const threads = [
+      thread('thr_1', '2026-07-02T00:00:00.000Z'),
+      thread('thr_2', '2026-07-02T00:00:00.000Z')
+    ]
+
+    expect(designThreadBelongsToDocument({
+      threads,
+      workspaceRoot: '/workspace',
+      docId: 'doc',
+      activeThreadId: 'thr_1',
+      registry
+    })).toBe(true)
+    expect(designThreadBelongsToDocument({
+      threads,
+      workspaceRoot: '/workspace',
+      docId: 'doc',
+      activeThreadId: 'thr_2',
+      registry
+    })).toBe(false)
   })
 
   it('returns the registered active thread to select when switching design documents', () => {

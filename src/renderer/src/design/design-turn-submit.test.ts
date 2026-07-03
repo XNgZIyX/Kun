@@ -82,6 +82,7 @@ describe('submitDesignTurn', () => {
       prompt: 'DESIGN PROMPT',
       promptState: designState
     }))
+    const takeLastCanvasErrors = vi.fn(() => [])
     const sendMessage = vi.fn(async () => true)
     const clearAutoRepairScope = vi.fn()
 
@@ -105,6 +106,7 @@ describe('submitDesignTurn', () => {
       getCanvasViewportState: () => ({ vbox: { x: 0, y: 0, width: 1200, height: 800 } }) as never,
       getDesignSystemState: () => ({ system: createEmptyDesignSystem() }) as never,
       getDesignTokensState: () => ({ byArtifact: {} }) as never,
+      takeLastCanvasErrors,
       resolveTarget,
       prepareTurnFiles,
       buildPromptPayload
@@ -128,6 +130,7 @@ describe('submitDesignTurn', () => {
       target: 'canvas',
       previousOpErrors: []
     }))
+    expect(takeLastCanvasErrors).toHaveBeenCalledWith('/workspace:doc:board')
     expect(sendMessage).toHaveBeenCalledWith('DESIGN PROMPT', 'agent', {
       displayText: 'Create a dashboard',
       model: 'deepseek-chat',

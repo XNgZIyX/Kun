@@ -30,6 +30,14 @@ export function designThreadsForDocument(options: DesignThreadSelectorOptions): 
     .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))
 }
 
+export function designThreadBelongsToDocument(options: DesignThreadSelectorOptions & {
+  activeThreadId?: string | null
+}): boolean {
+  const activeThreadId = options.activeThreadId?.trim()
+  if (!activeThreadId) return false
+  return designThreadsForDocument(options).some((thread) => thread.id === activeThreadId)
+}
+
 export function designThreadToSelectForDocument(options: DesignThreadSelectorOptions & {
   activeThreadId?: string | null
   route: string
@@ -60,8 +68,7 @@ export function designThreadSelectionSyncForDocument(options: DesignThreadSelect
   if (options.route !== 'design' || !activeThreadId) return { action: 'none' }
   const threadId = designThreadToSelectForDocument(options)
   if (threadId) return { action: 'select', threadId }
-  const currentDocThreads = designThreadsForDocument(options)
-  return currentDocThreads.some((thread) => thread.id === activeThreadId)
+  return designThreadBelongsToDocument(options)
     ? { action: 'none' }
     : { action: 'clear' }
 }

@@ -103,10 +103,31 @@ export function normalizeDesignThreadRegistry(raw: unknown): DesignThreadRegistr
         : threadIds[0]
     workspaces[key] = { activeThreadId, threadIds }
   }
+  const unique = enforceUniqueThreadScopes(workspaces)
   const trimmed = Object.fromEntries(
-    Object.entries(workspaces).slice(-MAX_DESIGN_REGISTRY_WORKSPACES)
+    Object.entries(unique).slice(-MAX_DESIGN_REGISTRY_WORKSPACES)
   )
   return { version: 1, workspaces: trimmed }
+}
+
+function enforceUniqueThreadScopes(
+  records: DesignThreadRegistry['workspaces']
+): DesignThreadRegistry['workspaces'] {
+  const seen = new Set<string>()
+  const workspaces: DesignThreadRegistry['workspaces'] = {}
+  for (const [scopeKey, record] of Object.entries(records)) {
+    const threadIds = record.threadIds.filter((id) => {
+      if (seen.has(id)) return false
+      seen.add(id)
+      return true
+    })
+    if (threadIds.length === 0) continue
+    workspaces[scopeKey] = {
+      activeThreadId: threadIds.includes(record.activeThreadId) ? record.activeThreadId : threadIds[0],
+      threadIds
+    }
+  }
+  return workspaces
 }
 
 export function readDesignThreadRegistry(
@@ -153,6 +174,7 @@ function mergeLegacyDesignAssistantThreads(
   for (const [workspaceRoot, value] of Object.entries(raw as Record<string, unknown>)) {
     const threadId = typeof value === 'string' ? value.trim() : ''
     if (!threadId) continue
+    if (designThreadIds(next).has(threadId)) continue
     next = markDesignThread(workspaceRoot, '', threadId, next)
   }
   return next
@@ -183,11 +205,20 @@ export function markDesignThread(
   const key = designDocKey(workspaceRoot, docId)
   const id = threadId.trim()
   if (!key || !id) return registry
-  const record = registry.workspaces[key] ?? { activeThreadId: '', threadIds: [] }
+  const workspaces: DesignThreadRegistry['workspaces'] = {}
+  for (const [scopeKey, existing] of Object.entries(registry.workspaces)) {
+    const threadIds = existing.threadIds.filter((item) => item !== id)
+    if (scopeKey !== key && threadIds.length === 0) continue
+    workspaces[scopeKey] = {
+      activeThreadId: existing.activeThreadId === id ? threadIds[0] ?? '' : existing.activeThreadId,
+      threadIds
+    }
+  }
+  const record = workspaces[key] ?? { activeThreadId: '', threadIds: [] }
   const threadIds = [id, ...record.threadIds.filter((item) => item !== id)]
   return normalizeDesignThreadRegistry({
     ...registry,
-    workspaces: { ...registry.workspaces, [key]: { activeThreadId: id, threadIds } }
+    workspaces: { ...workspaces, [key]: { activeThreadId: id, threadIds } }
   })
 }
 

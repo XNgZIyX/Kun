@@ -9,6 +9,7 @@ import {
   forgetDesignThread,
   isDesignThreadId,
   markDesignThread,
+  normalizeDesignThreadRegistry,
   readDesignThreadRegistry,
   saveDesignThreadRegistry,
   splitDesignDocKey
@@ -98,6 +99,66 @@ describe('design-thread-registry', () => {
       .toEqual(['thread-login'])
     expect(registry.workspaces[designDocKey('/Users/zxy/project', 'settings')]?.threadIds)
       .toEqual(['thread-settings'])
+  })
+
+  it('moves a design thread between documents instead of sharing it across whiteboards', () => {
+    const registry = markDesignThread(
+      '/Users/zxy/project',
+      'settings',
+      'thread-design',
+      markDesignThread(
+        '/Users/zxy/project',
+        'login',
+        'thread-design',
+        emptyDesignThreadRegistry()
+      )
+    )
+
+    expect(registry.workspaces[designDocKey('/Users/zxy/project', 'login')]).toBeUndefined()
+    expect(registry.workspaces[designDocKey('/Users/zxy/project', 'settings')]?.threadIds)
+      .toEqual(['thread-design'])
+  })
+
+  it('normalizes duplicate historical thread ownership to a single document scope', () => {
+    const registry = normalizeDesignThreadRegistry({
+      workspaces: {
+        [designDocKey('/Users/zxy/project', 'login')]: {
+          activeThreadId: 'thread-design',
+          threadIds: ['thread-design']
+        },
+        [designDocKey('/Users/zxy/project', 'settings')]: {
+          activeThreadId: 'thread-design',
+          threadIds: ['thread-design']
+        }
+      }
+    })
+
+    expect(registry.workspaces[designDocKey('/Users/zxy/project', 'login')]?.threadIds)
+      .toEqual(['thread-design'])
+    expect(registry.workspaces[designDocKey('/Users/zxy/project', 'settings')]).toBeUndefined()
+  })
+
+  it('does not let stale legacy workspace records steal an existing document-scoped thread', () => {
+    const storage = new MemoryStorage()
+    saveDesignThreadRegistry(
+      markDesignThread('/Users/zxy/project', 'login', 'thread-design', emptyDesignThreadRegistry()),
+      storage
+    )
+    storage.setItem(
+      'kun.design-assistant.threadRegistry.v1',
+      JSON.stringify({ '/Users/zxy/project': 'thread-design' })
+    )
+
+    const restored = readDesignThreadRegistry(storage)
+
+    expect(restored.workspaces[designDocKey('/Users/zxy/project', 'login')]?.threadIds)
+      .toEqual(['thread-design'])
+    expect(activeDesignThreadForWorkspace(
+      '/Users/zxy/project',
+      '',
+      [thread('thread-design')],
+      restored
+    )).toBeNull()
   })
 
   it('resolves a thread id back to its design document directory scope', () => {
